@@ -267,11 +267,14 @@ class RTCRtpSender:
 
     async def _next_encoded_frame(self, codec: RTCRtpCodecParameters):
         # get [Frame|Packet]
-        while True:
+        while self.__track is not None:
             data = await self.__track.recv()
             if data != None:
                 break
             await asyncio.sleep(0.01) #wait for data
+
+        if data is None: #self.__track removed
+            return None
 
         audio_level = None
 
@@ -331,6 +334,9 @@ class RTCRtpSender:
                     continue
 
                 enc_frame = await self._next_encoded_frame(codec)
+                if enc_frame is None:
+                    continue
+
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
 
                 for i, payload in enumerate(enc_frame.payloads):
