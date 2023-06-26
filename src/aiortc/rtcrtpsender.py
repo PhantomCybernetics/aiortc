@@ -267,7 +267,12 @@ class RTCRtpSender:
 
     async def _next_encoded_frame(self, codec: RTCRtpCodecParameters):
         # get [Frame|Packet]
-        data = await self.__track.recv()
+        while True:
+            data = await self.__track.recv()
+            if data != None:
+                break
+            await asyncio.sleep(0.01) #wait for data
+
         audio_level = None
 
         if self.__encoder is None:
