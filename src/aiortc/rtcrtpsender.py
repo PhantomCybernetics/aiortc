@@ -124,6 +124,13 @@ class RTCRtpSender:
         return self.__track
 
     @property
+    def encoder(self) -> Encoder:
+        """
+        The :class:`Encoder` which is being handled by the sender.
+        """
+        return self.__encoder
+
+    @property
     def transport(self):
         """
         The :class:`RTCDtlsTransport` over which media data for the track is
@@ -278,9 +285,6 @@ class RTCRtpSender:
 
         audio_level = None
 
-        if self.__encoder is None:
-            self.__encoder = get_encoder(codec)
-
         if isinstance(data, Frame):
             # encode frame
             if isinstance(data, AudioFrame):
@@ -322,8 +326,10 @@ class RTCRtpSender:
         self.__force_keyframe = True
 
     async def _run_rtp(self, codec: RTCRtpCodecParameters) -> None:
-        self.__log_debug("- RTP started")
+        self.__log_debug(f"- RTP started, stream_id={self._stream_id} codec={str(codec)}")
         self.__rtp_started.set()
+
+        self.__encoder = get_encoder(codec)
 
         sequence_number = random16()
         timestamp_origin = random32()
@@ -370,9 +376,9 @@ class RTCRtpSender:
                     self.__octet_count += len(payload)
                     self.__packet_count += 1
                     sequence_number = uint16_add(sequence_number, 1)
-        except (asyncio.CancelledError, ConnectionError, MediaStreamError):
+        except (asyncio.CancelledError, ConnectionError, MediaStreamError) as e:
             pass
-        except Exception:
+        except:
             # we *need* to set __rtp_exited, otherwise RTCRtpSender.stop() will hang,
             # so issue a warning if we hit an unexpected exception
             self.__log_warning(traceback.format_exc())
@@ -382,7 +388,7 @@ class RTCRtpSender:
             self.__track.stop()
             self.__track = None
 
-        self.__log_debug("- RTP finished")
+        self.__log_debug("- RTP stream_id={self._stream_id} finished")
         self.__rtp_exited.set()
 
     async def _run_rtcp(self) -> None:
