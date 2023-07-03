@@ -17,3 +17,6 @@ class RTCSessionDescription:
                 "'type' must be in ['offer', 'pranswer', 'answer', 'rollback'] "
                 f"(got '{self.type}')"
             )
+
+    def __str__(self):
+        return f'RTCSessionDescription(type={self.type}) SDP:\n{self.sdp}'
