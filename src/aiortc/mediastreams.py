@@ -5,6 +5,9 @@ import uuid
 from abc import ABCMeta, abstractmethod
 from typing import Tuple, Union
 
+import sys
+import traceback
+
 from av import AudioFrame, VideoFrame
 from av.frame import Frame
 from av.packet import Packet
@@ -62,6 +65,9 @@ class MediaStreamTrack(AsyncIOEventEmitter, metaclass=ABCMeta):
         if not self.__ended:
             self.__ended = True
             self.emit("ended")
+            print('track just ended, traceback:')
+            for line in traceback.format_stack():
+                print(line.strip())
 
             # no more events will be emitted, so remove all event listeners
             # to facilitate garbage collection.

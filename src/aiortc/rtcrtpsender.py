@@ -281,6 +281,7 @@ class RTCRtpSender:
             await asyncio.sleep(0.01) #wait for data
 
         if data is None: #self.__track removed
+            print('track has no data')
             return None
 
         audio_level = None
@@ -341,6 +342,7 @@ class RTCRtpSender:
 
                 enc_frame = await self._next_encoded_frame(codec)
                 if enc_frame is None:
+                    print('track enc_frame is none!')
                     continue
 
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
@@ -377,8 +379,11 @@ class RTCRtpSender:
                     self.__packet_count += 1
                     sequence_number = uint16_add(sequence_number, 1)
         except (asyncio.CancelledError, ConnectionError, MediaStreamError) as e:
+            print(f'track exception 1: {str(e)}')
             pass
-        except:
+        except Exception as e:
+            print(f'track exception 2: {traceback.format_exc()}')
+
             # we *need* to set __rtp_exited, otherwise RTCRtpSender.stop() will hang,
             # so issue a warning if we hit an unexpected exception
             self.__log_warning(traceback.format_exc())

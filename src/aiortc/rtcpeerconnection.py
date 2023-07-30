@@ -422,6 +422,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         Add a :class:`MediaStreamTrack` to the set of media tracks which
         will be transmitted to the remote peer.
         """
+
         # check state is valid
         self.__assertNotClosed()
         if track.kind not in ["audio", "video"]:
