@@ -259,6 +259,7 @@ class RTCRtpSender:
             for seq in packet.lost:
                 await self._retransmit(seq)
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_PLI:
+            print('Keyframe requested!')
             self._send_keyframe()
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_APP:
             try:
@@ -289,6 +290,8 @@ class RTCRtpSender:
 
         audio_level = None
 
+        # print(f'_next_encoded_frame received {type(data)}')
+
         if isinstance(data, Frame):
             # encode frame
             if isinstance(data, AudioFrame):
@@ -299,7 +302,11 @@ class RTCRtpSender:
             payloads, timestamp = await self.__loop.run_in_executor(
                 None, self.__encoder.encode, data, force_keyframe
             )
-        else:
+        elif isinstance(data, tuple):
+            payloads = data[0]
+            timestamp = data[1]
+            # print(f'_next_encoded_frame received {len(payloads)} packets w stamp={timestamp}')
+        else: # must be av.Packet
             payloads, timestamp = self.__encoder.pack(data)
 
         return RTCEncodedFrame(payloads, timestamp, audio_level)
@@ -323,11 +330,17 @@ class RTCRtpSender:
             packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
             await self.transport._send_rtp(packet_bytes)
 
-    def _send_keyframe(self) -> None:
+    def _send_keyframe(self, state:bool=True) -> None:
         """
         Request the next frame to be a keyframe.
         """
-        self.__force_keyframe = True
+        self.__force_keyframe = state
+
+    def get_send_keyframe(self, reset:bool=True) -> bool:
+        state = self.__force_keyframe
+        if reset:
+            self.__force_keyframe = False
+        return state
 
     async def _run_rtp(self, codec: RTCRtpCodecParameters) -> None:
         self.__log_debug(f"- RTP started, stream_id={self._stream_id} codec={str(codec)}")
@@ -340,12 +353,13 @@ class RTCRtpSender:
         try:
             while True:
                 if not self.__track:
-                    await asyncio.sleep(0.02) #wait for track
+                    await asyncio.sleep(0.02) # wait for track
                     continue
 
                 enc_frame = await self._next_encoded_frame(codec)
                 if enc_frame is None:
                     # print('track enc_frame is none!')
+                    await asyncio.sleep(0.001) # wait for track
                     continue
 
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
