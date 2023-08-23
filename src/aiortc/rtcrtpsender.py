@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Optional, Union
 
 from av import AudioFrame
 from av.frame import Frame
+from termcolor import colored as c
 
 from . import clock, rtp
 from .codecs import get_capabilities, get_encoder, is_rtx
@@ -395,11 +396,14 @@ class RTCRtpSender:
                     self.__octet_count += len(payload)
                     self.__packet_count += 1
                     sequence_number = uint16_add(sequence_number, 1)
-        except (asyncio.CancelledError, ConnectionError, MediaStreamError) as e:
-            print(f'track exception 1: {str(e)}')
+        except ConnectionError as e:
+            print(c(f'RTP ConnectionError: {e}', 'red'))
+            pass
+        except (asyncio.CancelledError, MediaStreamError) as e:
+            print(f'Track exception: {str(e)}')
             pass
         except Exception as e:
-            print(f'track exception 2: {traceback.format_exc()}')
+            print(f'Unknown track exception: {traceback.format_exc()}')
 
             # we *need* to set __rtp_exited, otherwise RTCRtpSender.stop() will hang,
             # so issue a warning if we hit an unexpected exception
@@ -452,12 +456,18 @@ class RTCRtpSender:
                     )
 
                 await self._send_rtcp(packets)
+        except ConnectionError as e:
+            print(c(f'RTCP ConnectionError {e}', 'red'))
+            pass
         except asyncio.CancelledError:
             pass
 
         # RTCP BYE
         packet = RtcpByePacket(sources=[self._ssrc])
-        await self._send_rtcp([packet])
+        try:
+            await self._send_rtcp([packet])
+        except ConnectionError: #fine here
+            pass
 
         self.__log_debug("- RTCP finished")
         self.__rtcp_exited.set()
@@ -468,10 +478,7 @@ class RTCRtpSender:
             self.__log_debug("> %s", packet)
             payload += bytes(packet)
 
-        try:
-            await self.transport._send_rtp(payload)
-        except ConnectionError:
-            pass
+        await self.transport._send_rtp(payload)
 
     def __log_warning(self, msg: str, *args) -> None:
         logger.warning(f"RTCRtpsender(%s) {msg}", self.__kind, *args)

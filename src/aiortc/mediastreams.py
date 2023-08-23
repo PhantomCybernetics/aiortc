@@ -63,11 +63,12 @@ class MediaStreamTrack(AsyncIOEventEmitter, metaclass=ABCMeta):
 
     def stop(self) -> None:
         if not self.__ended:
+            print('Ending media track')
             self.__ended = True
             self.emit("ended")
-            print('track just ended, traceback:')
-            for line in traceback.format_stack():
-                print(line.strip())
+
+            #for line in traceback.format_stack():
+            #    print(line.strip())
 
             # no more events will be emitted, so remove all event listeners
             # to facilitate garbage collection.

@@ -1507,8 +1507,12 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         """
         # send FORWARD TSN
         if self._forward_tsn_chunk is not None:
-            await self._send_chunk(self._forward_tsn_chunk)
-            self._forward_tsn_chunk = None
+            try:
+                await self._send_chunk(self._forward_tsn_chunk)
+                self._forward_tsn_chunk = None
+            except ConnectionError as e:
+                print(f'ConnectionError {e}')
+                return
 
             # ensure T3 is running
             if not self._t3_handle:
@@ -1663,22 +1667,29 @@ class RTCSctpTransport(AsyncIOEventEmitter):
                 channel._setId(stream_id)
 
             # send data
-            if protocol == WEBRTC_DCEP:
-                await self._send(stream_id, protocol, user_data)
-            else:
-                if channel.maxPacketLifeTime:
-                    expiry = time.time() + (channel.maxPacketLifeTime / 1000)
+            try:
+                if protocol == WEBRTC_DCEP:
+                    await self._send(stream_id, protocol, user_data)
                 else:
-                    expiry = None
-                await self._send(
-                    stream_id,
-                    protocol,
-                    user_data,
-                    expiry=expiry,
-                    max_retransmits=channel.maxRetransmits,
-                    ordered=channel.ordered,
-                )
-                channel._addBufferedAmount(-len(user_data))
+                    if channel.maxPacketLifeTime:
+                        expiry = time.time() + (channel.maxPacketLifeTime / 1000)
+                    else:
+                        expiry = None
+
+                    await self._send(
+                        stream_id,
+                        protocol,
+                        user_data,
+                        expiry=expiry,
+                        max_retransmits=channel.maxRetransmits,
+                        ordered=channel.ordered,
+                    )
+                    channel._addBufferedAmount(-len(user_data))
+            except ConnectionError:
+                self._set_state(self.State.CLOSED)
+                pass
+            except Exception as e:
+                raise e
 
     def _data_channel_add_negotiated(self, channel: RTCDataChannel) -> None:
         if channel.id in self._data_channels:
