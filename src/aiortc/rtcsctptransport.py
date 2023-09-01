@@ -1392,7 +1392,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
             for channel in list(self._data_channels.values()):
                 if channel.negotiated and channel.readyState != "open":
                     channel._setReadyState("open")
-            asyncio.ensure_future(self._data_channel_flush())
+            self._loop.create_task(self._data_channel_flush())
         elif state == self.State.CLOSED:
             self._t1_cancel()
             self._t2_cancel()
@@ -1425,7 +1425,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         if self._t1_failures > SCTP_MAX_INIT_RETRANS:
             self._set_state(self.State.CLOSED)
         else:
-            asyncio.ensure_future(self._send_chunk(self._t1_chunk))
+            self._loop.create_task(self._send_chunk(self._t1_chunk))
             self._t1_handle = self._loop.call_later(self._rto, self._t1_expired)
 
     def _t1_start(self, chunk: Chunk) -> None:
@@ -1451,7 +1451,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         if self._t2_failures > SCTP_MAX_ASSOCIATION_RETRANS:
             self._set_state(self.State.CLOSED)
         else:
-            asyncio.ensure_future(self._send_chunk(self._t2_chunk))
+            self._loop.create_task(self._send_chunk(self._t2_chunk))
             self._t2_handle = self._loop.call_later(self._rto, self._t2_expired)
 
     def _t2_start(self, chunk) -> None:
@@ -1480,7 +1480,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         self._ssthresh = max(self._cwnd // 2, 4 * USERDATA_MAX_LENGTH)
         self._cwnd = USERDATA_MAX_LENGTH
 
-        asyncio.ensure_future(self._transmit())
+        self._loop.create_task(self._transmit())
 
     def _t3_restart(self) -> None:
         self.__log_debug("- T3 restart")
@@ -1625,7 +1625,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
                 # queue a stream reset
                 self._reconfig_queue.append(channel.id)
                 if len(self._reconfig_queue) == 1:
-                    asyncio.ensure_future(self._transmit_reconfig())
+                    self._loop.create_task(self._transmit_reconfig())
             else:
                 # remove any queued messages for the datachannel
                 new_queue = deque()
@@ -1734,7 +1734,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         data += channel.label.encode("utf8")
         data += channel.protocol.encode("utf8")
         self._data_channel_queue.append((channel, WEBRTC_DCEP, data))
-        asyncio.ensure_future(self._data_channel_flush())
+        self._loop.create_task(self._data_channel_flush())
 
     async def _data_channel_receive(
         self, stream_id: int, pp_id: int, data: bytes
@@ -1816,7 +1816,8 @@ class RTCSctpTransport(AsyncIOEventEmitter):
 
         channel._addBufferedAmount(len(user_data))
         self._data_channel_queue.append((channel, pp_id, user_data))
-        asyncio.ensure_future(self._data_channel_flush())
+
+        self._loop.create_task(self._data_channel_flush())
 
     class State(enum.Enum):
         CLOSED = 1
