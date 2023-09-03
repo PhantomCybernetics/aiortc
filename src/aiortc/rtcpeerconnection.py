@@ -1013,7 +1013,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                     await dtlsTransport.start(self.__remoteDtls[transceiver])
                 if dtlsTransport.state == "connected":
                     if transceiver.currentDirection in ["sendonly", "sendrecv"]:
-                        await transceiver.sender.send(self.__localRtp(transceiver))
+                        await transceiver.sender.send(self.__localRtp(transceiver), run_rtp_loop=False)
                     if transceiver.currentDirection in ["recvonly", "sendrecv"]:
                         await transceiver.receiver.receive(
                             self.__remoteRtp(transceiver)

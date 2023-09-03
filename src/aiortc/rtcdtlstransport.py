@@ -588,7 +588,9 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
             data = self._tx_srtp.protect_rtcp(data)
         else:
             data = self._tx_srtp.protect(data)
+
         await self.transport._send(data)
+        self.sending = False
         self.__tx_bytes += len(data)
         self.__tx_packets += 1
 

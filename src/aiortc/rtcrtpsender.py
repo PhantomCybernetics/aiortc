@@ -6,8 +6,9 @@ import traceback
 import uuid
 from typing import Callable, Dict, List, Optional, Union
 
-from av import AudioFrame
+from av import AudioFrame, Packet
 from av.frame import Frame
+
 from termcolor import colored as c
 
 from . import clock, rtp
@@ -106,6 +107,14 @@ class RTCRtpSender:
         self.__packet_count = 0
         self.__rtt = None
 
+        self.sequence_number = random16()
+        self.timestamp_origin = random32()
+        self.__codec:RTCRtpCodecParameters = None
+        self.enc_frame = None
+        self.last_send_task = None
+
+        self.run_rtcp_loop:bool = True
+
         # logging
         self.__log_debug: Callable[..., None] = lambda *args: None
         if logger.isEnabledFor(logging.DEBUG):
@@ -186,7 +195,7 @@ class RTCRtpSender:
     def setTransport(self, transport) -> None:
         self.__transport = transport
 
-    async def send(self, parameters: RTCRtpSendParameters) -> None:
+    async def send(self, parameters: RTCRtpSendParameters, run_rtp_loop:bool) -> None:
         """
         Attempt to set the parameters controlling the sending of media.
 
@@ -199,6 +208,8 @@ class RTCRtpSender:
             # make note of the RTP header extension IDs
             self.__transport._register_rtp_sender(self, parameters)
             self.__rtp_header_extensions_map.configure(parameters)
+            self.__codec = parameters.codecs[0]
+            self.__encoder = get_encoder(self.__codec)
 
             # make note of RTX payload type
             for codec in parameters.codecs:
@@ -209,9 +220,44 @@ class RTCRtpSender:
                     self.__rtx_payload_type = codec.payloadType
                     break
 
-            self.__rtp_task = asyncio.ensure_future(self._run_rtp(parameters.codecs[0]))
+            if run_rtp_loop:
+                self.__rtp_task = asyncio.ensure_future(self._run_rtp())
+            else:
+                print(f"- RTP started without loop, stream_id={self._stream_id} codec={str(self.__codec)}")
+                self.__rtp_started.set()
+
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
             self.__started = True
+
+    def send_direct(self, frame_packet:Packet, loop:any, keyframe:bool):
+        if not self.__started:
+            print('send_direct not starteed yet')
+            return
+
+        # last_unfinished = self.last_send_task is not None and not self.last_send_task.done()
+        # if last_unfinished and not keyframe:
+            # return
+
+        payloads, timestamp = self.__encoder.pack(frame_packet)
+        enc_frame = RTCEncodedFrame(payloads, timestamp, 0)
+
+        if enc_frame is None:
+            print('send_direct empty frame')
+            return
+
+        # self.enc_frame = enc_frame
+        # if not last_unfinished or keyframe:
+        # def run_asap():
+            # loop.await() self.send_encoded_frame(enc_frame, self.__codec.payloadType)
+        # loop.call_soon_threadsafe(run_asap)
+        try:
+            if loop.is_running:
+                # loop.call_soon(await self.send_encoded_frame(enc_frame,self.__codec.payloadType))
+                loop.create_task(self.send_encoded_frame(enc_frame,self.__codec.payloadType))
+        except (ConnectionError, KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        except RuntimeError as e:
+            print(f'send_direct: {e}')
 
     async def stop(self):
         """
@@ -308,6 +354,7 @@ class RTCRtpSender:
             timestamp = data[1]
             # print(f'_next_encoded_frame received {len(payloads)} packets w stamp={timestamp}')
         else: # must be av.Packet
+            # print(f'__encoder packing {str(data)}')
             payloads, timestamp = self.__encoder.pack(data)
 
         return RTCEncodedFrame(payloads, timestamp, audio_level)
@@ -343,71 +390,74 @@ class RTCRtpSender:
             self.__force_keyframe = False
         return state
 
-    async def _run_rtp(self, codec: RTCRtpCodecParameters) -> None:
-        self.__log_debug(f"- RTP started, stream_id={self._stream_id} codec={str(codec)}")
+    async def send_encoded_frame(self, enc_frame:RTCEncodedFrame, payload_type: Optional[int] = None):
+
+        timestamp = uint32_add(self.timestamp_origin, enc_frame.timestamp)
+
+        for i, payload in enumerate(enc_frame.payloads):
+            packet = RtpPacket(
+                payload_type=payload_type,
+                sequence_number=self.sequence_number,
+                timestamp=timestamp,
+            )
+            packet.ssrc = self._ssrc
+            packet.payload = payload
+            packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0
+
+            # set header extensions
+            packet.extensions.abs_send_time = (
+                clock.current_ntp_time() >> 14
+            ) & 0x00FFFFFF
+            packet.extensions.mid = self.__mid
+            if enc_frame.audio_level is not None:
+                packet.extensions.audio_level = (False, -enc_frame.audio_level)
+
+            # send packet
+            self.__log_debug("> %s", packet)
+            self.__rtp_history[
+                packet.sequence_number % RTP_HISTORY_SIZE
+            ] = packet
+            packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
+            await self.transport._send_rtp(packet_bytes)
+
+            self.__ntp_timestamp = clock.current_ntp_time()
+            self.__rtp_timestamp = packet.timestamp
+            self.__octet_count += len(payload)
+            self.__packet_count += 1
+            self.sequence_number = uint16_add(self.sequence_number, 1)
+
+
+    async def _run_rtp(self) -> None:
+        self.__log_debug(f"- RTP started, stream_id={self._stream_id} codec={str(self.__codec)}")
         self.__rtp_started.set()
 
-        self.__encoder = get_encoder(codec)
-
-        sequence_number = random16()
-        timestamp_origin = random32()
-        try:
-            while True:
+        while True:
+            try:
                 if not self.__track:
                     await asyncio.sleep(0.02) # wait for track
                     continue
 
-                enc_frame = await self._next_encoded_frame(codec)
+                enc_frame = await self._next_encoded_frame()
                 if enc_frame is None:
                     # print('track enc_frame is none!')
-                    await asyncio.sleep(0.001) # wait for track
+                    await asyncio.sleep(0.01) # wait for track
                     continue
 
-                timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
+                await self.send_encoded_frame(enc_frame, self._condec.payloadType)
 
-                for i, payload in enumerate(enc_frame.payloads):
-                    packet = RtpPacket(
-                        payload_type=codec.payloadType,
-                        sequence_number=sequence_number,
-                        timestamp=timestamp,
-                    )
-                    packet.ssrc = self._ssrc
-                    packet.payload = payload
-                    packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0
+            except ConnectionError as e:
+                print(c(f'RTP ConnectionError: {e}', 'red'))
+                pass
+            except (asyncio.CancelledError, MediaStreamError) as e:
+                print(f'Track exception: {str(e)}')
+                break
+            except Exception as e:
+                print(f'Unknown track exception: {traceback.format_exc()}')
+                break
 
-                    # set header extensions
-                    packet.extensions.abs_send_time = (
-                        clock.current_ntp_time() >> 14
-                    ) & 0x00FFFFFF
-                    packet.extensions.mid = self.__mid
-                    if enc_frame.audio_level is not None:
-                        packet.extensions.audio_level = (False, -enc_frame.audio_level)
-
-                    # send packet
-                    self.__log_debug("> %s", packet)
-                    self.__rtp_history[
-                        packet.sequence_number % RTP_HISTORY_SIZE
-                    ] = packet
-                    packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
-                    await self.transport._send_rtp(packet_bytes)
-
-                    self.__ntp_timestamp = clock.current_ntp_time()
-                    self.__rtp_timestamp = packet.timestamp
-                    self.__octet_count += len(payload)
-                    self.__packet_count += 1
-                    sequence_number = uint16_add(sequence_number, 1)
-        except ConnectionError as e:
-            print(c(f'RTP ConnectionError: {e}', 'red'))
-            pass
-        except (asyncio.CancelledError, MediaStreamError) as e:
-            print(f'Track exception: {str(e)}')
-            pass
-        except Exception as e:
-            print(f'Unknown track exception: {traceback.format_exc()}')
-
-            # we *need* to set __rtp_exited, otherwise RTCRtpSender.stop() will hang,
-            # so issue a warning if we hit an unexpected exception
-            self.__log_warning(traceback.format_exc())
+        # we *need* to set __rtp_exited, otherwise RTCRtpSender.stop() will hang,
+        # so issue a warning if we hit an unexpected exception
+        self.__log_warning(traceback.format_exc())
 
         # stop track
         if self.__track:
