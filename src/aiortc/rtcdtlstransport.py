@@ -582,6 +582,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
     async def _send_rtp(self, data: bytes) -> None:
         if self._state != State.CONNECTED:
+            print('Cannot send encrypted RTP, not connected')
             raise ConnectionError("Cannot send encrypted RTP, not connected")
 
         if is_rtcp(data):

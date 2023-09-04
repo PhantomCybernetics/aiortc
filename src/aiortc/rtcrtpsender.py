@@ -229,7 +229,7 @@ class RTCRtpSender:
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
             self.__started = True
 
-    def send_direct(self, frame_packet:Packet, loop:any, keyframe:bool):
+    def send_direct(self, frame_packet:Packet, loop:any, keyframe:bool, camera_task_lock:asyncio.Future):
         if not self.__started:
             print('send_direct not starteed yet')
             return
@@ -253,7 +253,7 @@ class RTCRtpSender:
         try:
             if loop.is_running:
                 # loop.call_soon(await self.send_encoded_frame(enc_frame,self.__codec.payloadType))
-                loop.create_task(self.send_encoded_frame(enc_frame,self.__codec.payloadType))
+                loop.create_task(self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType, camera_task_lock=camera_task_lock))
         except (ConnectionError, KeyboardInterrupt, asyncio.CancelledError):
             pass
         except RuntimeError as e:
@@ -376,7 +376,10 @@ class RTCRtpSender:
 
             self.__log_debug("> %s", packet)
             packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
-            await self.transport._send_rtp(packet_bytes)
+            try:
+                await self.transport._send_rtp(packet_bytes)
+            except ConnectionError:
+                return
 
     def _send_keyframe(self, state:bool=True) -> None:
         """
@@ -390,7 +393,7 @@ class RTCRtpSender:
             self.__force_keyframe = False
         return state
 
-    async def send_encoded_frame(self, enc_frame:RTCEncodedFrame, payload_type: Optional[int] = None):
+    async def send_encoded_frame(self, enc_frame:RTCEncodedFrame, payload_type: Optional[int] = None, camera_task_lock:asyncio.Future=None):
 
         timestamp = uint32_add(self.timestamp_origin, enc_frame.timestamp)
 
@@ -413,12 +416,17 @@ class RTCRtpSender:
                 packet.extensions.audio_level = (False, -enc_frame.audio_level)
 
             # send packet
-            self.__log_debug("> %s", packet)
+            # self.__log_debug("> %s", packet)
             self.__rtp_history[
                 packet.sequence_number % RTP_HISTORY_SIZE
             ] = packet
             packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
-            await self.transport._send_rtp(packet_bytes)
+            try:
+                await self.transport._send_rtp(packet_bytes)
+            except ConnectionError:
+                return
+            except Exception as e:
+                raise e
 
             self.__ntp_timestamp = clock.current_ntp_time()
             self.__rtp_timestamp = packet.timestamp
@@ -426,6 +434,9 @@ class RTCRtpSender:
             self.__packet_count += 1
             self.sequence_number = uint16_add(self.sequence_number, 1)
 
+        if camera_task_lock != None:
+            # print ('send_encoded_frame clearing future')
+            camera_task_lock.set_result(True)
 
     async def _run_rtp(self) -> None:
         self.__log_debug(f"- RTP started, stream_id={self._stream_id} codec={str(self.__codec)}")
@@ -528,7 +539,10 @@ class RTCRtpSender:
             self.__log_debug("> %s", packet)
             payload += bytes(packet)
 
-        await self.transport._send_rtp(payload)
+        try:
+            await self.transport._send_rtp(payload)
+        except ConnectionError:
+            pass
 
     def __log_warning(self, msg: str, *args) -> None:
         logger.warning(f"RTCRtpsender(%s) {msg}", self.__kind, *args)
