@@ -238,8 +238,10 @@ class RTCRtpSender:
         # if last_unfinished and not keyframe:
             # return
 
+        time_start = time.time()
         payloads, timestamp = self.__encoder.pack(frame_packet)
         enc_frame = RTCEncodedFrame(payloads, timestamp, 0)
+        # print(f' >> {"frame" if not keyframe else "KEYFRAME"} {str(frame_packet.size)} B packetized into {str(len(payloads))} in {str(time.time()-time_start)} s')
 
         if enc_frame is None:
             print('send_direct empty frame')
@@ -254,6 +256,7 @@ class RTCRtpSender:
             if loop.is_running:
                 # loop.call_soon(await self.send_encoded_frame(enc_frame,self.__codec.payloadType))
                 loop.create_task(self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType, camera_task_lock=camera_task_lock))
+                #self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType, camera_task_lock=camera_task_lock, loop=loop)
         except (ConnectionError, KeyboardInterrupt, asyncio.CancelledError):
             pass
         except RuntimeError as e:
