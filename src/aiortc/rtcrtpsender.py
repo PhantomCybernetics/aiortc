@@ -252,15 +252,11 @@ class RTCRtpSender:
         # def run_asap():
             # loop.await() self.send_encoded_frame(enc_frame, self.__codec.payloadType)
         # loop.call_soon_threadsafe(run_asap)
-        try:
-            if loop.is_running:
-                # loop.call_soon(await self.send_encoded_frame(enc_frame,self.__codec.payloadType))
-                loop.create_task(self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType, camera_task_lock=camera_task_lock))
-                #self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType, camera_task_lock=camera_task_lock, loop=loop)
-        except (ConnectionError, KeyboardInterrupt, asyncio.CancelledError):
-            pass
-        except RuntimeError as e:
-            print(f'send_direct: {e}')
+
+        if loop.is_running:
+            # loop.call_soon(await self.send_encoded_frame(enc_frame,self.__codec.payloadType))
+            loop.create_task(self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType, camera_task_lock=camera_task_lock))
+            #self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType, camera_task_lock=camera_task_lock, loop=loop)
 
     async def stop(self):
         """
@@ -400,6 +396,9 @@ class RTCRtpSender:
 
         timestamp = uint32_add(self.timestamp_origin, enc_frame.timestamp)
 
+        if camera_task_lock != None:
+            camera_task_lock.set_result(True)
+
         for i, payload in enumerate(enc_frame.payloads):
             packet = RtpPacket(
                 payload_type=payload_type,
@@ -426,7 +425,9 @@ class RTCRtpSender:
             packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
             try:
                 await self.transport._send_rtp(packet_bytes)
-            except ConnectionError:
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                return
+            except ConnectionError as e:
                 return
             except Exception as e:
                 raise e
@@ -436,10 +437,6 @@ class RTCRtpSender:
             self.__octet_count += len(payload)
             self.__packet_count += 1
             self.sequence_number = uint16_add(self.sequence_number, 1)
-
-        if camera_task_lock != None:
-            # print ('send_encoded_frame clearing future')
-            camera_task_lock.set_result(True)
 
     async def _run_rtp(self) -> None:
         self.__log_debug(f"- RTP started, stream_id={self._stream_id} codec={str(self.__codec)}")
