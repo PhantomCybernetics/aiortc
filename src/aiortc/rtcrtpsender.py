@@ -378,7 +378,7 @@ class RTCRtpSender:
             try:
                 await self.transport._send_rtp(packet_bytes)
             except ConnectionError:
-                return
+                return #ignoe here
 
     def _send_keyframe(self, state:bool=True) -> None:
         """
@@ -424,7 +424,7 @@ class RTCRtpSender:
             ] = packet
             packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
             try:
-                await self.transport._send_rtp(packet_bytes)
+                await self.transport._send_rtp(packet_bytes) #throws Connection error
             except (KeyboardInterrupt, asyncio.CancelledError):
                 return
             except ConnectionError as e:
@@ -482,46 +482,45 @@ class RTCRtpSender:
         self.__log_debug("- RTCP started")
         self.__rtcp_started.set()
 
-        try:
-            while True:
-                # The interval between RTCP packets is varied randomly over the
-                # range [0.5, 1.5] times the calculated interval.
-                await asyncio.sleep(0.5 + random.random())
+        while True:
+            # The interval between RTCP packets is varied randomly over the
+            # range [0.5, 1.5] times the calculated interval.
+            await asyncio.sleep(0.5 + random.random())
 
-                # RTCP SR
-                packets: List[AnyRtcpPacket] = [
-                    RtcpSrPacket(
-                        ssrc=self._ssrc,
-                        sender_info=RtcpSenderInfo(
-                            ntp_timestamp=self.__ntp_timestamp,
-                            rtp_timestamp=self.__rtp_timestamp,
-                            packet_count=self.__packet_count,
-                            octet_count=self.__octet_count,
-                        ),
+            # RTCP SR
+            packets: List[AnyRtcpPacket] = [
+                RtcpSrPacket(
+                    ssrc=self._ssrc,
+                    sender_info=RtcpSenderInfo(
+                        ntp_timestamp=self.__ntp_timestamp,
+                        rtp_timestamp=self.__rtp_timestamp,
+                        packet_count=self.__packet_count,
+                        octet_count=self.__octet_count,
+                    ),
+                )
+            ]
+            self.__lsr = ((self.__ntp_timestamp) >> 16) & 0xFFFFFFFF
+            self.__lsr_time = time.time()
+
+            # RTCP SDES
+            if self.__cname is not None:
+                packets.append(
+                    RtcpSdesPacket(
+                        chunks=[
+                            RtcpSourceInfo(
+                                ssrc=self._ssrc,
+                                items=[(1, self.__cname.encode("utf8"))],
+                            )
+                        ]
                     )
-                ]
-                self.__lsr = ((self.__ntp_timestamp) >> 16) & 0xFFFFFFFF
-                self.__lsr_time = time.time()
-
-                # RTCP SDES
-                if self.__cname is not None:
-                    packets.append(
-                        RtcpSdesPacket(
-                            chunks=[
-                                RtcpSourceInfo(
-                                    ssrc=self._ssrc,
-                                    items=[(1, self.__cname.encode("utf8"))],
-                                )
-                            ]
-                        )
-                    )
-
+                )
+            try:
                 await self._send_rtcp(packets)
-        except ConnectionError as e:
-            print(c(f'RTCP ConnectionError {e}', 'red'))
-            pass
-        except asyncio.CancelledError:
-            pass
+            except ConnectionError as e:
+                print(c(f'RTCP ConnectionError in _run_rtcp loop: {e}', 'red'))
+                raise e
+            except asyncio.CancelledError:
+                return
 
         # RTCP BYE
         packet = RtcpByePacket(sources=[self._ssrc])
@@ -539,10 +538,7 @@ class RTCRtpSender:
             self.__log_debug("> %s", packet)
             payload += bytes(packet)
 
-        try:
-            await self.transport._send_rtp(payload)
-        except ConnectionError:
-            pass
+            await self.transport._send_rtp(payload) #throws Connection error
 
     def __log_warning(self, msg: str, *args) -> None:
         logger.warning(f"RTCRtpsender(%s) {msg}", self.__kind, *args)

@@ -1336,19 +1336,23 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         except Exception as e:
             raise e
 
-    async def _send_chunk(self, chunk: Chunk) -> None:
+    async def _send_chunk(self, chunk: Chunk) -> bool:
         """
         Transmit a chunk (no bundling for now).
         """
         self.__log_debug("> %s", chunk)
-        await self.__transport._send_data(
-            serialize_packet(
-                self._local_port,
-                self._remote_port,
-                self._remote_verification_tag,
-                chunk,
+        try:
+            await self.__transport._send_data(
+                serialize_packet(
+                    self._local_port,
+                    self._remote_port,
+                    self._remote_verification_tag,
+                    chunk,
+                )
             )
-        )
+            return True
+        except ConnectionError:
+            return False
 
     async def _send_reconfig_param(self, param):
         chunk = ReconfigChunk()
