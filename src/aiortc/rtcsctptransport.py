@@ -1825,7 +1825,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         else:
             pp_id, user_data = WEBRTC_BINARY, data
 
-        last_unfinished = self._last_send_task is not None and not self._last_send_task.done()
+        # last_unfinished = self._last_send_task is not None and not self._last_send_task.done()
 
         # if last_unfinished:
         while True:
@@ -1839,8 +1839,8 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         self._data_channel_queue.append((channel, pp_id, user_data))
 
         #each topic has a separate channel
-        if not last_unfinished:
-            self._last_send_task = self._loop.create_task(self._data_channel_flush())
+        # if not last_unfinished:
+        self._last_send_task = self._loop.create_task(self._data_channel_flush())
 
     class State(enum.Enum):
         CLOSED = 1

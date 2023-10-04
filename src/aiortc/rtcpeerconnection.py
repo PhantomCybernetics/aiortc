@@ -441,7 +441,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                     return transceiver.sender
 
         transceiver = self.__createTransceiver(
-            direction="sendrecv", kind=track.kind, sender_track=track
+            direction="sendonly", kind=track.kind, sender_track=track
         )
         return transceiver.sender
 
@@ -691,6 +691,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
 
         bundle = sdp.GroupDescription(semantic="BUNDLE", items=[])
         for media in description.media:
+            # if media.kind != "video":
             bundle.items.append(media.rtp.muxId)
         description.group.append(bundle)
 

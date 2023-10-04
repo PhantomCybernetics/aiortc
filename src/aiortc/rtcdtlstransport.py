@@ -312,6 +312,8 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
         self.__local_certificate = certificate
 
+        # self.sequence_lock = False
+
     @property
     def state(self) -> str:
         """
