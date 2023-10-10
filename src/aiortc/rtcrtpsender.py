@@ -284,8 +284,10 @@ class RTCRtpSender:
         try:
             await self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType)
         except ConnectionError:
+            pass # keep trying until peer disconnects
+
             # self.paused = True
-            print(f'Connection error in send_direct stream_id={self._stream_id}')
+            # print(f'Connection error in send_direct stream_id={self._stream_id}')
 
         # self.last_send_task.set_result(True)
 
@@ -468,7 +470,7 @@ class RTCRtpSender:
                 # self.transport.sequence_lock = False
                 return
             except ConnectionError as e:
-                print(f'ConnectionError in sender {self.name} {e}')
+                # print(f'ConnectionError in sender {self.name} {e}')
                 raise e
                 # self.transport.sequence_lock = False
             except Exception as e:
@@ -563,7 +565,7 @@ class RTCRtpSender:
                 await self._send_rtcp(packets)
             except ConnectionError as e:
                 print(c(f'RTCP ConnectionError in sender _run_rtcp loop of stream_id={self._stream_id} : {e}', 'red'))
-                continue
+                raise e
             except asyncio.CancelledError:
                 pass
 
