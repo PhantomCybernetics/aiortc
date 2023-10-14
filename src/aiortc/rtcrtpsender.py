@@ -240,6 +240,10 @@ class RTCRtpSender:
             # print(f'{self.name} send_direct not starteed yet')
             return
 
+        if self.__transport.state == "closed":
+            print(f'{self.name} send_direct connection closed')
+            raise ConnectionError
+
         # if self.last_send_task != None and not self.last_send_task.done():
         #     return
 
