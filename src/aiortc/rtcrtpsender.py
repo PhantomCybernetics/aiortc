@@ -311,7 +311,8 @@ class RTCRtpSender:
 
             # shutdown RTP and RTCP tasks
             await asyncio.gather(self.__rtp_started.wait(), self.__rtcp_started.wait())
-            self.__rtp_task.cancel()
+            if self.__rtp_task != None:
+                self.__rtp_task.cancel()
             self.__rtcp_task.cancel()
             await asyncio.gather(self.__rtp_exited.wait(), self.__rtcp_exited.wait())
 
