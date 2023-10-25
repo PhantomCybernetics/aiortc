@@ -308,13 +308,22 @@ class RTCRtpSender:
         """
         if self.__started:
             self.__transport._unregister_rtp_sender(self)
-
             # shutdown RTP and RTCP tasks
-            await asyncio.gather(self.__rtp_started.wait(), self.__rtcp_started.wait())
+            if self.__rtp_task != None:
+                await asyncio.gather(self.__rtp_started.wait(), self.__rtcp_started.wait())
+            else:
+                await self.__rtcp_started.wait()
+
             if self.__rtp_task != None:
                 self.__rtp_task.cancel()
+
             self.__rtcp_task.cancel()
-            await asyncio.gather(self.__rtp_exited.wait(), self.__rtcp_exited.wait())
+
+            if self.__rtp_task != None:
+                await asyncio.gather(self.__rtp_exited.wait(), self.__rtcp_exited.wait())
+            else:
+                self.__rtcp_exited.set() #keeps hanging otherwise even with the cancel (?1))
+                await self.__rtcp_exited.wait()
 
     async def _handle_rtcp_packet(self, packet):
         if isinstance(packet, (RtcpRrPacket, RtcpSrPacket)):
@@ -571,8 +580,9 @@ class RTCRtpSender:
             except ConnectionError as e:
                 print(c(f'RTCP ConnectionError in sender _run_rtcp loop of stream_id={self._stream_id} : {e}', 'red'))
                 raise e
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as e:
+                print(c(f'RTCP _run_rtcp loop of stream_id={self._stream_id} : cancelled', 'red'))
+                raise e
 
         # RTCP BYE
         packet = RtcpByePacket(sources=[self._ssrc])
