@@ -118,7 +118,8 @@ class RTCRtpSender:
 
         self.background_tasks = set()
         self.last_send_task:asyncio.Future = None
-
+        self.connection_error_logged = False
+        
         # logging
         self.__log_debug: Callable[..., None] = lambda *args: None
         if logger.isEnabledFor(logging.DEBUG):
@@ -241,8 +242,13 @@ class RTCRtpSender:
             return
 
         if self.__transport.state == "closed":
-            print(f'{self.name} send_direct connection closed')
-            raise ConnectionError
+            if not self.connection_error_logged:
+                print(c(f'{self.name} send_direct connection closed', 'red'))
+                self.connection_error_logged = True
+            return
+            # raise ConnectionError
+
+        self.connection_error_logged = False
 
         # if self.last_send_task != None and not self.last_send_task.done():
         #     return
@@ -288,6 +294,7 @@ class RTCRtpSender:
         try:
             await self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__codec.payloadType)
         except ConnectionError:
+            print(c('ConnectionError while send_encoded_frame of {self.name}', 'red'))
             pass # keep trying until peer disconnects
 
             # self.paused = True
@@ -484,7 +491,7 @@ class RTCRtpSender:
                 # self.transport.sequence_lock = False
                 return
             except ConnectionError as e:
-                # print(f'ConnectionError in sender {self.name} {e}')
+                print(f'ConnectionError in sender loop {self.name} {e}')
                 raise e
                 # self.transport.sequence_lock = False
             except Exception as e:
@@ -578,8 +585,12 @@ class RTCRtpSender:
             try:
                 await self._send_rtcp(packets)
             except ConnectionError as e:
-                print(c(f'RTCP ConnectionError in sender _run_rtcp loop of stream_id={self._stream_id} : {e}', 'red'))
-                raise e
+                print(c(f'!!RTCP ConnectionError in sender _run_rtcp loop of stream_id={self._stream_id} : {e}', 'red'))
+                print(traceback.format_exc())
+                self.__rtcp_exited.set()
+                return
+                # await asyncio.sleep(1.0)
+                # pass
             except asyncio.CancelledError as e:
                 print(c(f'RTCP _run_rtcp loop of stream_id={self._stream_id} : cancelled', 'red'))
                 raise e
