@@ -554,11 +554,7 @@ class RTCRtpSender:
             self.__log_debug("> %s", packet)
             payload += bytes(packet)
 
-        try:
-            await self.transport._send_rtp(payload)
-        except ConnectionError:
-            print('Connection error in sender')
-            pass
+        await self.transport._send_rtp(payload) #throws Connection error
 
     def __log_warning(self, msg: str, *args) -> None:
         logger.warning(f"RTCRtpsender(%s) {msg}", self.__kind, *args)
