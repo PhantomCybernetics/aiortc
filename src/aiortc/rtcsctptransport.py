@@ -1803,6 +1803,13 @@ class RTCSctpTransport(AsyncIOEventEmitter):
         else:
             pp_id, user_data = WEBRTC_BINARY, data
 
+        while not channel.ordered: # clear unfinished in the queue if not ordered
+            try:
+                channel, protocol, user_data = self._data_channel_queue.popleft()
+                channel._addBufferedAmount(-len(user_data))
+            except IndexError:
+                break
+
         channel._addBufferedAmount(len(user_data))
         self._data_channel_queue.append((channel, pp_id, user_data))
         asyncio.ensure_future(self._data_channel_flush())
