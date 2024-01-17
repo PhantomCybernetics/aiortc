@@ -9,6 +9,8 @@ from typing import Callable, Dict, List, Optional, Union
 from av import AudioFrame
 from av.frame import Frame
 
+from termcolor import colored as c
+
 from . import clock, rtp
 from .codecs import get_capabilities, get_encoder, is_rtx
 from .codecs.base import Encoder
@@ -105,6 +107,12 @@ class RTCRtpSender:
         self.__packet_count = 0
         self.__rtt = None
 
+        self.__direct_mode = False
+        self.__direct_sequence_number = random16()
+        self.__direct_timestamp_origin = 0
+        self.__direct_connection_error_logged = False
+        self.__direct_codec = None
+        
         # logging
         self.__log_debug: Callable[..., None] = lambda *args: None
         if logger.isEnabledFor(logging.DEBUG):
@@ -177,6 +185,9 @@ class RTCRtpSender:
 
     def setTransport(self, transport) -> None:
         self.__transport = transport
+        
+    def setDirect(self, direct_mode=True):
+        self.__direct_mode = direct_mode
 
     async def send(self, parameters: RTCRtpSendParameters) -> None:
         """
@@ -185,6 +196,9 @@ class RTCRtpSender:
         :param parameters: The :class:`RTCRtpSendParameters` for the sender.
         """
         if not self.__started:
+            
+            print(c(f"Starting RTC RTP sender {self}{' DIRECT' if self.__direct_mode else ''}", 'magenta'))
+            
             self.__cname = parameters.rtcp.cname
             self.__mid = parameters.muxId
 
@@ -200,10 +214,69 @@ class RTCRtpSender:
                 ):
                     self.__rtx_payload_type = codec.payloadType
                     break
-
-            self.__rtp_task = asyncio.ensure_future(self._run_rtp(parameters.codecs[0]))
+            
+            self.__direct_codec = parameters.codecs[0]
+            if not self.__direct_mode:
+                self.__rtp_task = asyncio.ensure_future(self._run_rtp(parameters.codecs[0]))
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
             self.__started = True
+
+    async def send_direct(self, frame_data:list, keyframe:bool, stamp_converted:int=None):
+       
+        if not self.__started:
+            return
+       
+        if self.__transport.state == "closed":
+            if not self.__direct_connection_error_logged:
+                print(c(f'{self.name} send_direct connection closed', 'red'))
+                self.__direct_connection_error_logged = True
+            return
+            # raise ConnectionError
+
+        self.__direct_connection_error_logged = False #reset
+
+        # if self.last_send_task != None and not self.last_send_task.done():
+        #     return
+
+        # if self.pc.signalingState != 'stable':
+        #     print(f'{self.name} pc.signallingState={self.pc.signalingState} !')
+        #     return
+
+        # last_unfinished = self.last_send_task is not None and not self.last_send_task.done()
+        # if last_unfinished and not keyframe:
+            # return
+
+        if not keyframe and self.__packet_count == 0:
+            return
+
+        # time_start = time.time()
+        if not isinstance(frame_data, list): # needs to be packetized by topic reader
+            print(c('Invalid payload packets in {self.name}', 'red'))
+            return
+
+        enc_frame = RTCEncodedFrame(frame_data, stamp_converted, 0)
+
+        # print(c(f'Sending frame stream_id={self._stream_id}, {len(payloads)} pkgs, {"KEYFRAME " if keyframe else ""} ts={timestamp}, sender={self.name}', 'cyan'))
+
+        # print(f' >> {"frame" if not keyframe else "KEYFRAME"} {str(frame_packet.size)} B packetized into {str(len(payloads))} in {str(time.time()-time_start)} s')
+
+        if enc_frame is None:
+            print(f'send_direct empty frame stream_id={self._stream_id}')
+            return
+
+        # self.last_send_task = asyncio.get_event_loop().create_future()
+
+        # self.enc_frame = enc_frame
+        # if not last_unfinished or keyframe:
+        # def run_asap():
+            # loop.await() self.send_encoded_frame(enc_frame, self.__codec.payloadType)
+        # loop.call_soon_threadsafe(run_asap)
+
+        try:
+            await self.send_encoded_frame(enc_frame=enc_frame, payload_type=self.__direct_codec.payloadType)
+        except ConnectionError:
+            print(c('ConnectionError while send_encoded_frame of {self.name}', 'red'))
+            pass # keep trying until peer disconnects
 
     async def stop(self):
         """
@@ -270,7 +343,7 @@ class RTCRtpSender:
         data = await self.__track.recv()
         audio_level = None
 
-        if self.__encoder is None:
+        if self.__encoder is None:  
             self.__encoder = get_encoder(codec)
 
         if isinstance(data, Frame):
@@ -312,6 +385,58 @@ class RTCRtpSender:
         Request the next frame to be a keyframe.
         """
         self.__force_keyframe = True
+
+    async def send_encoded_frame(self, enc_frame:RTCEncodedFrame, payload_type: Optional[int] = None):
+
+        timestamp = uint32_add(self.__direct_timestamp_origin, enc_frame.timestamp)
+                 
+        # self.transport.sequence_lock = True
+        for i, payload in enumerate(enc_frame.payloads):
+            packet = RtpPacket(
+                payload_type=payload_type,
+                sequence_number=self.__direct_sequence_number,
+                timestamp=timestamp,
+            )
+            packet.ssrc = self._ssrc
+            packet.payload = payload
+            packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0
+
+            # set header extensions
+            packet.extensions.abs_send_time = (
+                clock.current_ntp_time() >> 14
+            ) & 0x00FFFFFF
+            packet.extensions.mid = self.__mid
+            if enc_frame.audio_level is not None:
+                packet.extensions.audio_level = (False, -enc_frame.audio_level)
+
+            # send packet
+            # self.__log_debug("> %s", packet)
+            # print(f'> {self.name} {str(packet)} trans={str(id(self.transport))}')
+            # self.__rtp_history[
+            #     packet.sequence_number % RTP_HISTORY_SIZE
+            # ] = packet
+            packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
+            try:
+                # print(c(f"Sending encoded frame packet rtp w {len(packet_bytes)}B seq={self.__direct_sequence_number}", 'cyan'))
+                await self.transport._send_rtp(packet_bytes) #throws Connection error
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                # self.transport.sequence_lock = False
+                return
+            except ConnectionError as e:
+                print(f'ConnectionError in sender loop {self.name} {e}')
+                raise e
+                # self.transport.sequence_lock = False
+            except Exception as e:
+                print(f'Exception in sender {self.name} {e}')
+                # self.transport.sequence_lock = False
+                raise e
+
+            self.__ntp_timestamp = clock.current_ntp_time()
+            self.__rtp_timestamp = packet.timestamp
+            self.__octet_count += len(payload)
+            self.__packet_count += 1
+            self.__direct_sequence_number = uint16_add(self.__direct_sequence_number, 1)
+        # self.transport.sequence_lock = False
 
     async def _run_rtp(self, codec: RTCRtpCodecParameters) -> None:
         self.__log_debug("- RTP started")
@@ -432,6 +557,7 @@ class RTCRtpSender:
         try:
             await self.transport._send_rtp(payload)
         except ConnectionError:
+            print('Connection error in sender')
             pass
 
     def __log_warning(self, msg: str, *args) -> None:
