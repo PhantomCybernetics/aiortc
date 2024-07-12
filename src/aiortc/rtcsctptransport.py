@@ -1813,7 +1813,7 @@ class RTCSctpTransport(AsyncIOEventEmitter):
             pp_id, user_data = WEBRTC_BINARY_EMPTY, b"\x00"
         else:
             pp_id, user_data = WEBRTC_BINARY, data
-
+        
         while not channel.ordered: # clear unfinished in the queue if not ordered
             try:
                 channel, protocol, user_data = self._data_channel_queue.popleft()

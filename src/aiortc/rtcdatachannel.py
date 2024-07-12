@@ -8,6 +8,7 @@ from .exceptions import InvalidStateError
 
 logger = logging.getLogger(__name__)
 
+from termcolor import colored as c
 
 @dataclass
 class RTCDataChannelParameters:
@@ -192,6 +193,7 @@ class RTCDataChannel(AsyncIOEventEmitter):
             and self.__bufferedAmount + amount <= self.bufferedAmountLowThreshold
         )
         self.__bufferedAmount += amount
+                
         if crosses_threshold:
             self.emit("bufferedamountlow")
 

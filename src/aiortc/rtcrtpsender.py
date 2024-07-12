@@ -554,7 +554,8 @@ class RTCRtpSender:
 
         # RTCP BYE
         packet = RtcpByePacket(sources=[self._ssrc])
-        await self._send_rtcp([packet])
+        try: await self._send_rtcp([packet])
+        except: pass 
 
         self.__log_debug("- RTCP finished")
         self.__rtcp_exited.set()
