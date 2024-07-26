@@ -1007,7 +1007,11 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                 iceTransport.iceGatherer.getLocalCandidates()
                 and transceiver in self.__remoteIce
             ):
-                await iceTransport.start(self.__remoteIce[transceiver])
+                try:
+                    await iceTransport.start(self.__remoteIce[transceiver])
+                except Exception as e:
+                    self.__log_debug(f"iceTransport.start threw exception {e}")
+                    continue
                 if dtlsTransport.state == "new":
                     await dtlsTransport.start(self.__remoteDtls[transceiver])
                 if dtlsTransport.state == "connected":
@@ -1024,7 +1028,11 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                 iceTransport.iceGatherer.getLocalCandidates()
                 and self.__sctp in self.__remoteIce
             ):
-                await iceTransport.start(self.__remoteIce[self.__sctp])
+                try:
+                    await iceTransport.start(self.__remoteIce[self.__sctp])
+                except Exception as e:
+                    self.__log_debug(f"iceTransport.start threw exception {e}")
+                    return
                 if dtlsTransport.state == "new":
                     await dtlsTransport.start(self.__remoteDtls[self.__sctp])
                 if dtlsTransport.state == "connected":
